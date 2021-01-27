@@ -1,100 +1,54 @@
-'''
-(*)~----------------------------------------------------------------------------------
- Pupil - eye tracking platform
- Copyright (C) 2012-2015  Pupil Labs
+"""
+(*)~---------------------------------------------------------------------------
+Pupil - eye tracking platform
+Copyright (C) 2012-2020 Pupil Labs
 
- Distributed under the terms of the CC BY-NC-SA License.
- License details are in the file license.txt, distributed as part of this software.
-----------------------------------------------------------------------------------~(*)
-'''
+Distributed under the terms of the GNU
+Lesser General Public License (LGPL v3.0).
+See COPYING and COPYING.LESSER for license details.
+---------------------------------------------------------------------------~(*)
+"""
 
 """
-video_capture is a module that extends opencv"s camera_capture for mac and windows
-on Linux it repleaces it completelty.
-it adds some fuctionalty like:
-    - access to all uvc controls
-    - assosication by name patterns instead of id's (0,1,2..)
-it requires:
-    - opencv 2.3+
-    - on Linux: v4l2-ctl (via apt-get install v4l2-util)
-    - on MacOS: uvcc (binary is distributed with this module)
+Video Capture provides the interface to get frames from diffferent backends.
+Backends consist of a manager and at least one source class. The manager
+is a Pupil plugin that provides an GUI that lists all available sources. The
+source provides the stream of image frames.
+
+These backends are available:
+- UVC: Local USB sources
+- NDSI: Remote Pupil Mobile sources
+- Fake: Fallback, static grid image
+- File: Loads video from file
 """
-import os,sys
-import cv2
-import numpy as np
-from os.path import isfile
-from time import time
 
-import platform
-os_name = platform.system()
-del platform
-
-#logging
 import logging
+import os
+from glob import glob
+
+import numpy as np
+
+from .base_backend import (
+    Base_Manager,
+    Base_Source,
+    EndofVideoError,
+    InitialisationError,
+    StreamError,
+)
+from .file_backend import File_Manager, File_Source, FileSeekError
+from .hmd_streaming import HMD_Streaming_Source
+from .uvc_backend import UVC_Manager, UVC_Source
+
 logger = logging.getLogger(__name__)
 
 
-###OS specific imports and defs
-if os_name in ("Linux","Darwin","Windows"):
-    from uvc_capture import Camera_Capture,device_list,CameraCaptureError
+source_classes = [File_Source, UVC_Source, HMD_Streaming_Source]
+manager_classes = [File_Manager, UVC_Manager]
+
+try:
+    from .ndsi_backend import NDSI_Source, NDSI_Manager
+except ImportError:
+    logger.info("Install pyndsi to use the Pupil Mobile backend")
 else:
-    raise NotImplementedError()
-
-from fake_capture import FakeCapture
-from file_capture import File_Capture, FileCaptureError, EndofVideoFileError,FileSeekError
-
-
-def autoCreateCapture(src,timestamps=None,timebase = None):
-    preferred_idx = 0
-    # checking src and handling all cases:
-    src_type = type(src)
-
-    if src_type is tuple:
-        src,preferred_idx = src
-        src_type = type(src)
-
-    #looking for attached cameras that match the suggested names
-    if src_type is list:
-        matching_devices = []
-        for device in device_list():
-            if any([s in device['name'] for s in src]):
-                matching_devices.append(device)
-
-        if len(matching_devices) > preferred_idx:
-            logger.info('Found %s as devices that match the src string pattern Using the %s match.'%([d['name'] for d in matching_devices],('first','second','third','fourth')[preferred_idx]) )
-        else:
-            if len(matching_devices) == 0:
-                logger.error('No device found that matched %s'%src)
-            else:
-                logger.error('Not enough devices found that matched %s'%src)
-            return FakeCapture(timebase=timebase)
-
-
-        cap = Camera_Capture(matching_devices[preferred_idx]['uid'],timebase)
-        logger.info("Camera selected: %s  with id: %s" %(matching_devices[preferred_idx]['name'],matching_devices[preferred_idx]['uid']))
-        return cap
-
-    #looking for attached cameras that match cv_id
-    elif src_type is int:
-        try:
-            cap = device_list()[i]
-        except IndexError, e:
-            logger.warning('Camera with id %s not found.'%src_type)
-            return FakeCapture(timebase=timebase)
-        else:
-            return Camera_Capture(cap['uid'],size,fps,timebase)
-
-
-    #looking for videofiles
-    elif src_type is str:
-        if not isfile(src):
-            logger.error('Could not locate VideoFile %s'%src)
-            raise FileCaptureError('Could not locate VideoFile %s'%src)
-        logger.info("Using %s as video source"%src)
-        return File_Capture(src,timestamps=timestamps)
-    else:
-        logger.error("autoCreateCapture: Could not create capture, wrong src_type")
-        return FakeCapture(size,fps,timebase=timebase)
-
-
-
+    source_classes.append(NDSI_Source)
+    manager_classes.append(NDSI_Manager)
